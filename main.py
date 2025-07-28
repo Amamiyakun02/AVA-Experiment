@@ -1,5 +1,4 @@
 import os
-import asyncio
 import json
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,23 +6,26 @@ from fastapi.responses import StreamingResponse
 import google.generativeai as genai
 from dotenv import load_dotenv
 
-# Load environment variables
+from utils.func_call.send_whatsapp import send_whatsapp_message
+
+with open("utils/func_call/func_instruction.json", "r") as f:
+    FUNCTION_INSTRUCTION = json.load(f)
+
 load_dotenv()
 
-# Konfigurasi API Key
 api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:
     raise RuntimeError("GEMINI_API_KEY tidak ditemukan di environment variables.")
 
 genai.configure(api_key=api_key)
 
-# Inisialisasi model
-model = genai.GenerativeModel('gemini-2.5-flash')
+model = genai.GenerativeModel(
+    model_name='gemini-2.5-flash',
+    tools=[{"function_declarations": [FUNCTION_INSTRUCTION]}]
+)
 
-# Inisialisasi FastAPI
 app = FastAPI()
 
-# Konfigurasi CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -32,9 +34,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# User experience
 EXPERIENCE = {
-    "user_id": "amamiya",   
+    "user_id": "amamiya",
     "name": "Cristina",
     "personality": {
         "role": "Asisten Virtual",
@@ -45,18 +46,32 @@ EXPERIENCE = {
 }
 
 def build_prompt(user_profile, user_input):
-    """Bangun system prompt berdasarkan pengalaman dan input user."""
     return f"""
         Kamu adalah {user_profile["name"]}, seorang {user_profile["personality"]["role"]}.
         Gaya bicaramu: {user_profile["personality"]["style"]}.
-        Gunakan {user_profile["personality"]["language"]}.
-        Jawablah dengan cara alami dan sesuai konteks, tanpa mengulang perkenalan jika tidak diminta.
-        
+        Bahasa yang kamu gunakan: {user_profile["personality"]["language"]}.
+
+        PERANMU:
+        - Menjadi asisten virtual serba bisa untuk membantu pengguna dengan berbagai hal.
+        - Kamu dapat menjawab pertanyaan, membuat kode program, memberi saran, atau menjalankan fungsi tertentu jika diperlukan.
+
+        ATURAN:
+        1. Jika pengguna memberikan permintaan teknis seperti coding, kamu dapat langsung memberikan jawabannya dengan penjelasan yang baik.
+        2. Jika pengguna memberikan perintah seperti mengirim pesan WhatsApp, dan kamu memiliki akses ke fungsi yang sesuai, silakan panggil fungsi tersebut.
+        3. Jangan memaksakan penggunaan alat jika pengguna tidak memintanya. Hanya gunakan jika permintaannya relevan dengan alat.
+        4. Setelah memanggil fungsi, kamu boleh melanjutkan dengan ucapan atau penjelasan jika diperlukan.
+
+        CONTOH:
+        - Jika pengguna berkata "tolong kirim pesan ke Rika", maka kamu bisa memanggil fungsi pengiriman WhatsApp.
+        - Jika pengguna bertanya tentang Python atau AI, jawab dan bantu mereka dengan penjelasan dan kode jika perlu.
+
+        Sekarang bantu pengguna di bawah ini:
+
         User:
         {user_input}
-        
+
         {user_profile["name"]}:
-        """
+    """
 
 @app.post("/stream")
 async def stream_response(request: Request):
@@ -71,18 +86,75 @@ async def stream_response(request: Request):
 
         def stream_gen():
             try:
+                print("\n📨 Prompt terkirim ke model:")
+                print(prompt)
+
                 response = model.generate_content(prompt, stream=True)
+                print("\n📡 Model mulai streaming...")
+                print(response)
+                buffer = ""
+
                 for chunk in response:
-                    if chunk.text:
-                        yield f"data: {json.dumps({'text': chunk.text})}\n\n"
+                    try:
+                        if hasattr(chunk, "parts") and chunk.parts:
+                            part = chunk.parts[0]
+
+                            if hasattr(part, "function_call") and part.function_call:
+                                func_call = part.function_call
+                                func_name = func_call.name
+                                print("⚙️ Fungsi dipanggil:", func_name)
+
+                                if func_call.args is None:
+                                    raise ValueError("Argumen function_call kosong.")
+                                args = dict(func_call.args)
+
+                                if func_name == "send_whatsapp_message":
+                                    try:
+                                        result = send_whatsapp_message(**args)
+                                        target_name = args.get("targets", [{}])[0].get("name", "pengguna")
+                                        if result and result.get("status") is True:
+                                            yield f"data: {json.dumps({'text': f'✅ Pesan berhasil dikirim ke {target_name}'})}\n\n"
+                                        else:
+                                            reason = result.get("message", "❌ Gagal mengirim pesan.")
+                                            yield f"data: {json.dumps({'text': reason})}\n\n"
+                                    except Exception as func_err:
+                                        yield f"data: {json.dumps({'text': f'❌ Gagal menjalankan fungsi: {str(func_err)}'})}\n\n"
+
+                                post_response = model.generate_content([
+                                    {"role": "user", "parts": [user_input]},
+                                    {"role": "model", "parts": [part]}
+                                ])
+                                for post_part in post_response.parts:
+                                    if hasattr(post_part, "text"):
+                                        yield f"data: {json.dumps({'text': post_part.text.strip()})}\n\n"
+                                continue
+
+                            elif hasattr(part, "text") and isinstance(part.text, str):
+                                buffer += part.text
+
+                        elif hasattr(chunk, "text") and isinstance(chunk.text, str):
+                            buffer += chunk.text
+
+                        while "\n" in buffer:
+                            line, buffer = buffer.split("\n", 1)
+                            if line.strip():
+                                yield f"data: {json.dumps({'text': line.strip()})}\n\n"
+
+                    except Exception as chunk_err:
+                        yield f"data: {json.dumps({'text': f'❌ Error saat memproses chunk: {str(chunk_err)}'})}\n\n"
+
+                if buffer.strip():
+                    yield f"data: {json.dumps({'text': buffer.strip()})}\n\n"
+
             except Exception as e:
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                yield f"data: {json.dumps({'text': f'❌ Terjadi kesalahan dalam stream: {str(e)}'})}\n\n"
 
         return StreamingResponse(stream_gen(), media_type="text/event-stream")
 
     except Exception as e:
+        print("❌ Error global /stream:", e)
         return StreamingResponse(
-            iter([f"data: {json.dumps({'error': str(e)})}\n\n"]),
+            iter([f"data: {json.dumps({'text': f'❌ Gagal memproses permintaan: {str(e)}'})}\n\n"]),
             media_type="text/event-stream",
             status_code=400
         )

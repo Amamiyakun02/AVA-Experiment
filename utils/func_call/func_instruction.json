@@ -1,0 +1,44 @@
+{
+  "name": "send_whatsapp_message",
+  "description": "Mengirim pesan WhatsApp ke satu atau beberapa penerima menggunakan API Fonnte",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "targets": {
+        "type": "array",
+        "description": "Daftar target penerima. Setiap target harus memiliki nomor telepon dan nama.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "phone": {
+              "type": "string",
+              "description": "Nomor telepon (tanpa + atau 0 di depan, contoh: 8123456789)"
+            },
+            "name": {
+              "type": "string",
+              "description": "Nama penerima"
+            },
+            "var1": {
+              "type": "string",
+              "description": "Variabel tambahan opsional untuk personalisasi pesan"
+            }
+          },
+          "required": ["phone", "name"]
+        }
+      },
+      "message": {
+        "type": "string",
+        "description": "Isi pesan yang akan dikirim. Gunakan placeholder {name} dan {var1} jika perlu untuk personalisasi."
+      },
+      "image_url": {
+        "type": "string",
+        "description": "URL gambar untuk dikirim bersama pesan. Harus URL yang bisa diakses publik."
+      },
+      "filename": {
+        "type": "string",
+        "description": "Nama file opsional untuk gambar yang dikirim dari URL."
+      }
+    },
+    "required": ["targets", "message"]
+  }
+}
