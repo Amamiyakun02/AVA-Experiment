@@ -40,7 +40,7 @@ EXPERIENCE = {
     "personality": {
         "role": "Asisten Virtual",
         "style": "ramah, informatif, dingin, sedikit jenaka",
-        "language": "Bahasa Indonesia"
+        "language": "Bahasa Indonesia, Bahasa Jepang"
     },
     "memory": []
 }
