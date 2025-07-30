@@ -5,14 +5,14 @@ client = genai.Client()
 db_client = chromadb.PersistentClient(path="./chroma_db")  # folder bisa kamu atur
 collection = db_client.get_or_create_collection(name="gemini_memory")
 
-# # 3. Teks yang ingin kamu embed
+# 3. Teks yang ingin kamu embed
 # texts = [
 #     "What is the meaning of life?",
 #     "What is the purpose of existence?",
 #     "How do I bake a cake?"
 # ]
 #
-# # 4. Generate embedding dari Gemini
+# 4. Generate embedding dari Gemini
 # result = client.models.embed_content(
 #         model="gemini-embedding-001",
 #         contents= texts
@@ -20,7 +20,7 @@ collection = db_client.get_or_create_collection(name="gemini_memory")
 #
 # embeddings = [e.values for e in result.embeddings]
 #
-# # # 5. Simpan ke ChromaDB (tanpa embedding_function)
+# 5. Simpan ke ChromaDB (tanpa embedding_function)
 # # collection.add(
 # #     ids=[f"doc{i}" for i in range(len(texts))],
 # #     documents=texts,
