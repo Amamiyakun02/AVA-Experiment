@@ -22,9 +22,6 @@ if not api_key:
 ai = AIEngine(api_key=api_key)
 memory = MemoryManager(
     user_id="amamiya",
-    mongo_service=db,
-    chroma_client=chroma_client,
-    embedding_fn=get_embedding,
 )
 app = FastAPI()
 
@@ -75,22 +72,22 @@ async def index(payload: ChatRequest = Body(...)):
             raise ValueError("Konten pesan kosong.")
 
         # === Memory Recall ===
-        # context_memories = memory.recall(user_input, top_k=3)
-        # context = "\n".join(context_memories)
+        context_memories = memory.recall(user_input, top_k=3)
+        context = "\n".join(context_memories)
 
         # === Bangun Prompt dengan Memori ===
-        # prompt = build_prompt(ASSISTANT, f"{context}\n\nUser:\n{user_input}")
-        prompt = build_prompt(ASSISTANT,user_input)
-
-        # === Stream ke LLM ===
+        full_input = f"{context}\n\nUser:\n{user_input}" if context else user_input
+        prompt = build_prompt(ASSISTANT, full_input)
+        print(prompt)
+        # === Streaming ke LLM ===
         async def streaming_wrapper():
             full_response = ""
             async for chunk in ai.stream_generate_text(prompt):
                 full_response += chunk
                 yield chunk
             # Simpan memori setelah selesai stream
-            # memory.store_memory(user_input, source="user")
-            # memory.store_memory(full_response, source="assistant")
+            memory.store_memory(user_input, source="user")
+            memory.store_memory(full_response, source="assistant")
 
         return StreamingResponse(streaming_wrapper(), media_type="text/event-stream")
 
