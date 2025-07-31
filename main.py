@@ -1,27 +1,34 @@
 import os
 import json
-from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+import google.generativeai as genai
+from dotenv import load_dotenv
 
-from services.mongo_service import memory_col, chat_messages_col, chat_sessions_col
-from utils.func_call.send_whatsapp import send_whatsapp_message
 from services import AIEngine
+from services.mongo_service import memory_col, chat_messages_col, chat_sessions_col
 
-# Load .env dan instruksi fungsi
-load_dotenv()
+from utils.func_call.send_whatsapp import send_whatsapp_message
+
 with open("utils/func_call/func_instruction.json", "r") as f:
     FUNCTION_INSTRUCTION = json.load(f)
 
-# Konfigurasi Gemini
+load_dotenv()
+
 api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:
     raise RuntimeError("GEMINI_API_KEY tidak ditemukan di environment variables.")
 
-model = AIEngine(api_key=api_key, tools=[{"function_declarations": [FUNCTION_INSTRUCTION]}])
+genai.configure(api_key=api_key)
 
-# FastAPI App
+model = genai.GenerativeModel(
+    model_name='gemini-2.5-flash',
+    tools=[{"function_declarations": [FUNCTION_INSTRUCTION]}]
+)
+
+ai = AIEngine(api_key=api_key)
+
 app = FastAPI()
 
 app.add_middleware(
@@ -32,7 +39,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Profil Cristina
 EXPERIENCE = {
     "user_id": "amamiya",
     "name": "Cristina",
@@ -61,7 +67,7 @@ def build_prompt(user_profile, user_input):
         4. Setelah memanggil fungsi, kamu boleh melanjutkan dengan ucapan atau penjelasan jika diperlukan.
 
         CONTOH:
-        - Jika pengguna berkata \"tolong kirim pesan ke Rika\", maka kamu bisa memanggil fungsi pengiriman WhatsApp.
+        - Jika pengguna berkata "tolong kirim pesan ke Rika", maka kamu bisa memanggil fungsi pengiriman WhatsApp.
         - Jika pengguna bertanya tentang Python atau AI, jawab dan bantu mereka dengan penjelasan dan kode jika perlu.
 
         Sekarang bantu pengguna di bawah ini:
@@ -72,82 +78,46 @@ def build_prompt(user_profile, user_input):
         {user_profile["name"]}:
     """
 
-@app.post("/stream")
-async def stream_response(request: Request):
-    try:
-        data = await request.json()
-        messages = data.get("messages", [])
-        if not messages:
-            raise ValueError("messages tidak boleh kosong.")
+# from typing import List
+# from pydantic import BaseModel, Field
+# class CodeProgram(BaseModel):
+#     narasi: str = Field(description="Penjelasan singkat mengenai tujuan atau fungsi dari kode program ini.")
+#     nama_bahasa: str = Field(
+#         description="Nama bahasa pemrograman yang digunakan, contoh: Python, JavaScript, Java.")
+#     isi_program: str = Field(description="Seluruh isi kode program dalam bentuk string mentah.")
+#     perintah_lain: List[str] = Field(description="Daftar perintah atau instruksi tambahan untuk menjalankan kode.")
 
-        user_input = messages[-1]["content"]
+@app.post("/streamtext")
+async def index(user_input: str):
+    try:
+        # data = await request.json()
+        # print(data)
+        #
+        # messages = data.get("messages", [])
+        # if not messages:
+        #     raise ValueError("Tidak ada pesan dalam permintaan.")
+        #
+        # user_input = messages[0].get("content", "")
+        # if not user_input:
+        #     raise ValueError("Konten pesan kosong.")
+
         prompt = build_prompt(EXPERIENCE, user_input)
 
-        def stream_gen():
-            try:
-                print("\n📨 Prompt terkirim ke model:")
-                print(prompt)
-
-                response = model.model.generate_content(prompt, stream=True)
-                buffer = ""
-
-                for chunk in response:
-                    if hasattr(chunk, "parts") and chunk.parts:
-                        part = chunk.parts[0]
-
-                        if hasattr(part, "function_call") and part.function_call:
-                            func_call = part.function_call
-                            func_name = func_call.name
-                            print("⚙️ Fungsi dipanggil:", func_name)
-
-                            if func_call.args is None:
-                                raise ValueError("Argumen function_call kosong.")
-                            args = dict(func_call.args)
-
-                            if func_name == "send_whatsapp_message":
-                                try:
-                                    result = send_whatsapp_message(**args)
-                                    target_name = args.get("targets", [{}])[0].get("name", "pengguna")
-                                    if result and result.get("status") is True:
-                                        yield f"data: {json.dumps({'text': f'✅ Pesan berhasil dikirim ke {target_name}'})}\n\n"
-                                    else:
-                                        reason = result.get("message", "❌ Gagal mengirim pesan.")
-                                        yield f"data: {json.dumps({'text': reason})}\n\n"
-                                except Exception as func_err:
-                                    yield f"data: {json.dumps({'text': f'❌ Gagal menjalankan fungsi: {str(func_err)}'})}\n\n"
-
-                            post_response = model.model.generate_content([
-                                {"role": "user", "parts": [user_input]},
-                                {"role": "model", "parts": [part]}
-                            ])
-                            for post_part in post_response.parts:
-                                if hasattr(post_part, "text"):
-                                    yield f"data: {json.dumps({'text': post_part.text.strip()})}\n\n"
-                            continue
-
-                        elif hasattr(part, "text") and isinstance(part.text, str):
-                            buffer += part.text
-
-                    elif hasattr(chunk, "text") and isinstance(chunk.text, str):
-                        buffer += chunk.text
-
-                    while "\n" in buffer:
-                        line, buffer = buffer.split("\n", 1)
-                        if line.strip():
-                            yield f"data: {json.dumps({'text': line.strip()})}\n\n"
-
-                if buffer.strip():
-                    yield f"data: {json.dumps({'text': buffer.strip()})}\n\n"
-
-            except Exception as err:
-                yield f"data: {json.dumps({'text': f'❌ Terjadi kesalahan dalam stream: {str(err)}'})}\n\n"
-
-        return StreamingResponse(stream_gen(), media_type="text/event-stream")
+        return StreamingResponse(
+            ai.stream_generate_text(prompt),
+            media_type="text/plain"
+        )
 
     except Exception as e:
-        print("❌ Error global /stream:", e)
-        return StreamingResponse(
-            iter([f"data: {json.dumps({'text': f'❌ Gagal memproses permintaan: {str(e)}'})}\n\n"]),
-            media_type="text/event-stream",
-            status_code=400
-        )
+        print("❌ Error global /streamtext:", e)
+
+        async def error_stream():
+            yield f"❌ Gagal memproses permintaan: {str(e)}\n"
+
+        return StreamingResponse(error_stream(), media_type="text/plain", status_code=400)
+
+@app.post("/streamer")
+async def stream_responsesss(user_input: str):
+    prompt = build_prompt(EXPERIENCE, user_input)
+
+    return StreamingResponse(ai.stream_generate_text(prompt), media_type="text/plain")

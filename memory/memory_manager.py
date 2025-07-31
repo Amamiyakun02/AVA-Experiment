@@ -1,6 +1,7 @@
 from uuid import uuid4
 from datetime import datetime, timezone, timedelta
 from summarizer import summarize_memory
+
 class MemoryManager:
     def __init__(self, user_id, chroma_client, mongo_db, embedding_fn):
         self.user_id = user_id

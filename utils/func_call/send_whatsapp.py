@@ -15,8 +15,10 @@ class Target(TypedDict):
     var1: Optional[str]
 
 def send_whatsapp_message(
-    targets: List[Target],
+    phone: str,
+    name: str,
     message: str,
+    var1: Optional[str] = "",
     image_url: Optional[str] = None,
     filename: Optional[str] = None,
     schedule: int = 0,
@@ -24,39 +26,16 @@ def send_whatsapp_message(
     delay: str = "2",
     country_code: str = "62",
     followup: int = 0
-) -> Optional[dict]:
+) -> str:
     """
-    Send WhatsApp message using Fonnte API (tanpa file lokal).
-
-    Args:
-        targets (List[Target]): List of target recipients
-        message (str): Message to send
-        image_url (Optional[str]): Image URL
-        filename (Optional[str]): Optional filename (for URL-based file)
-        schedule (int): Schedule timestamp
-        typing (bool): Typing indicator
-        delay (str): Delay in seconds
-        country_code (str): Country code
-        followup (int): Follow-up message ID
-
-    Returns:
-        dict: API response if successful, else None
+    Kirim satu pesan WhatsApp ke 1 nomor.
     """
 
-    url = 'https://api.fonnte.com/send'
-
-    # Format target string
-    target_str = ','.join([
-        f"{t['phone']}|{t['name']}|{t.get('var1', '')}"
-        for t in targets
-    ])
     if not TOKEN:
-        # Menambahkan penanganan jika token tidak ada
-        print("Error: WHATSAPP_GATEWAY_TOKEN tidak ditemukan.")
-        return {"status": False, "message": "Token otentikasi tidak dikonfigurasi."}
+        return "Token tidak ditemukan."
 
     payload = {
-        'target': target_str,
+        'target': f"{phone}|{name}|{var1}",
         'message': message,
         'schedule': schedule,
         'typing': typing,
@@ -70,15 +49,14 @@ def send_whatsapp_message(
     if filename:
         payload['filename'] = filename
 
-    headers = {
-        'Authorization': TOKEN
-    }
-
     try:
-        response = requests.post(url, data=payload, headers=headers)
+        response = requests.post(
+            "https://api.fonnte.com/send",
+            data=payload,
+            headers={'Authorization': TOKEN}
+        )
         response.raise_for_status()
-        return response.json()
+        return f"Status: {response.status_code}, Response: {response.json()}"
 
     except requests.RequestException as e:
-        print(f"Error sending message: {e}")
-        return None
+        return f"Error: {e}"
