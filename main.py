@@ -1,18 +1,17 @@
 import os
 import json
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-import google.generativeai as genai
 from dotenv import load_dotenv
-
 from services import AIEngine
-from services.mongo_service import memory_col, chat_messages_col, chat_sessions_col
-
-from utils.func_call.send_whatsapp import send_whatsapp_message
-
+from memory import MemoryManager
+from utils import  build_prompt, get_embedding
+from services import db, chroma_client
 with open("utils/func_call/func_instruction.json", "r") as f:
     FUNCTION_INSTRUCTION = json.load(f)
+with open("assistants/cristina.json", "r") as c:
+    ASSISTANT = json.load(c)
 
 load_dotenv()
 
@@ -20,15 +19,13 @@ api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:
     raise RuntimeError("GEMINI_API_KEY tidak ditemukan di environment variables.")
 
-genai.configure(api_key=api_key)
-
-model = genai.GenerativeModel(
-    model_name='gemini-2.5-flash',
-    tools=[{"function_declarations": [FUNCTION_INSTRUCTION]}]
-)
-
 ai = AIEngine(api_key=api_key)
-
+memory = MemoryManager(
+    user_id="amamiya",
+    mongo_service=db,
+    chroma_client=chroma_client,
+    embedding_fn=get_embedding,
+)
 app = FastAPI()
 
 app.add_middleware(
@@ -50,63 +47,52 @@ EXPERIENCE = {
     "memory": []
 }
 
-def build_prompt(user_profile, user_input):
-    return f"""
-        Kamu adalah {user_profile["name"]}, seorang {user_profile["personality"]["role"]}.
-        Gaya bicaramu: {user_profile["personality"]["style"]}.
-        Bahasa yang kamu gunakan: {user_profile["personality"]["language"]}.
+from typing import List, Literal
+from pydantic import BaseModel, Field
+class CodeProgram(BaseModel):
+    narasi: str = Field(description="Penjelasan singkat mengenai tujuan atau fungsi dari kode program ini.")
+    nama_bahasa: str = Field(
+        description="Nama bahasa pemrograman yang digunakan, contoh: Python, JavaScript, Java.")
+    isi_program: str = Field(description="Seluruh isi kode program dalam bentuk string mentah.")
+    perintah_lain: List[str] = Field(description="Daftar perintah atau instruksi tambahan untuk menjalankan kode.")
 
-        PERANMU:
-        - Menjadi asisten virtual serba bisa untuk membantu pengguna dengan berbagai hal.
-        - Kamu dapat menjawab pertanyaan, membuat kode program, memberi saran, atau menjalankan fungsi tertentu jika diperlukan.
 
-        ATURAN:
-        1. Jika pengguna memberikan permintaan teknis seperti coding, kamu dapat langsung memberikan jawabannya dengan penjelasan yang baik.
-        2. Jika pengguna memberikan perintah seperti mengirim pesan WhatsApp, dan kamu memiliki akses ke fungsi yang sesuai, silakan panggil fungsi tersebut.
-        3. Jangan memaksakan penggunaan alat jika pengguna tidak memintanya. Hanya gunakan jika permintaannya relevan dengan alat.
-        4. Setelah memanggil fungsi, kamu boleh melanjutkan dengan ucapan atau penjelasan jika diperlukan.
+class Message(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
 
-        CONTOH:
-        - Jika pengguna berkata "tolong kirim pesan ke Rika", maka kamu bisa memanggil fungsi pengiriman WhatsApp.
-        - Jika pengguna bertanya tentang Python atau AI, jawab dan bantu mereka dengan penjelasan dan kode jika perlu.
-
-        Sekarang bantu pengguna di bawah ini:
-
-        User:
-        {user_input}
-
-        {user_profile["name"]}:
-    """
-
-# from typing import List
-# from pydantic import BaseModel, Field
-# class CodeProgram(BaseModel):
-#     narasi: str = Field(description="Penjelasan singkat mengenai tujuan atau fungsi dari kode program ini.")
-#     nama_bahasa: str = Field(
-#         description="Nama bahasa pemrograman yang digunakan, contoh: Python, JavaScript, Java.")
-#     isi_program: str = Field(description="Seluruh isi kode program dalam bentuk string mentah.")
-#     perintah_lain: List[str] = Field(description="Daftar perintah atau instruksi tambahan untuk menjalankan kode.")
+class ChatRequest(BaseModel):
+    messages: List[Message]
 
 @app.post("/streamtext")
-async def index(user_input: str):
+async def index(payload: ChatRequest = Body(...)):
     try:
-        # data = await request.json()
-        # print(data)
-        #
-        # messages = data.get("messages", [])
-        # if not messages:
-        #     raise ValueError("Tidak ada pesan dalam permintaan.")
-        #
-        # user_input = messages[0].get("content", "")
-        # if not user_input:
-        #     raise ValueError("Konten pesan kosong.")
+        messages = payload.messages
+        if not messages:
+            raise ValueError("Tidak ada pesan dalam permintaan.")
+        user_input = messages[0].content
+        if not user_input:
+            raise ValueError("Konten pesan kosong.")
 
-        prompt = build_prompt(EXPERIENCE, user_input)
+        # === Memory Recall ===
+        # context_memories = memory.recall(user_input, top_k=3)
+        # context = "\n".join(context_memories)
 
-        return StreamingResponse(
-            ai.stream_generate_text(prompt),
-            media_type="text/plain"
-        )
+        # === Bangun Prompt dengan Memori ===
+        # prompt = build_prompt(ASSISTANT, f"{context}\n\nUser:\n{user_input}")
+        prompt = build_prompt(ASSISTANT,user_input)
+
+        # === Stream ke LLM ===
+        async def streaming_wrapper():
+            full_response = ""
+            async for chunk in ai.stream_generate_text(prompt):
+                full_response += chunk
+                yield chunk
+            # Simpan memori setelah selesai stream
+            # memory.store_memory(user_input, source="user")
+            # memory.store_memory(full_response, source="assistant")
+
+        return StreamingResponse(streaming_wrapper(), media_type="text/event-stream")
 
     except Exception as e:
         print("❌ Error global /streamtext:", e)
