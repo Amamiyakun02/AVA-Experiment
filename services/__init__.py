@@ -10,4 +10,4 @@ from .chroma_service import chroma_client
 from .mongo_service import db
 
 # collection
-from .mongo_service import contacts_col, users_col, memory_col, chat_sessions_col, chat_messages_col
+from .mongo_service import users_col, memory_col, chat_sessions_col, chat_messages_col

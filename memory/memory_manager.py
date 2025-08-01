@@ -37,3 +37,27 @@ class MemoryManager:
         texts = [m['text'] for m in old_memories]
         summary = summarize_memory(texts)
         self.store_memory(summary, source="summary")
+
+    def recall_mongo(self, top_k: int = 6) -> list[str]:
+        """
+        Mengambil top_k memori terbaru dari MongoDB dari user dan assistant.
+        Jumlah total hasil adalah top_k gabungan (bisa 3 user + 3 assistant, dll).
+
+        Returns:
+            List[str]: Daftar konten percakapan terakhir.
+        """
+        cursor = self.mongo.memory_col.find(
+            {
+                "user_id": self.user_id,
+                "source": {"$in": ["user", "assistant"]}
+            },
+            {
+                "_id": 0,
+                "text": 1,
+                "source": 1,
+                "timestamp": 1
+            }
+        ).sort("timestamp", -1).limit(top_k)
+
+        # Ambil isi teks saja (dan urutkan kembali secara kronologis)
+        return [doc["text"] for doc in reversed(list(cursor)) if "text" in doc]

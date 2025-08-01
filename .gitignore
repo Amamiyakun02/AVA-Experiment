@@ -182,3 +182,6 @@ chroma_db/
 
 ### AI Prompt Configuration
 assistants/
+experiment/
+
+.gitignore

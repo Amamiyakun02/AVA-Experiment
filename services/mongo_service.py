@@ -22,7 +22,6 @@ users_col = db["users"]
 memory_col = db["memory"]
 chat_sessions_col = db["chatsessions"]
 chat_messages_col = db["chatmessages"]
-contacts_col = db["contacts"]
 
 # ==== FUNGSI SERVIS ====
 

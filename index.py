@@ -41,8 +41,35 @@
 #     f.write(audio_bytes)
 #
 # print("✅ Audio berhasil disimpan sebagai output.mp3")
-from memory import MemoryManager
+# from memory import MemoryManager
+#
+# memory = MemoryManager(user_id="amamiya")
+# memory.store_memory("Hari ini aku pergi ke pasar membeli apel.")
+# print(memory.recall("belanja buah", top_k=2))
+# from utils.func_call.get_whatsapp_contact import get_contact_by_name
+# print(get_contact_by_name(name="rahman"))
+from services import AIEngine
+# from memory import MemoryManager
+# memory = MemoryManager(
+#     user_id="amamiya",
+# )
+#
+# print(memory.recall_mongo(top_k=2))
+#
+# from utils import build_prompt
+# from main import ASSISTANT
+# print(build_prompt(ASSISTANT, "hello world"))
+#
+#
 
-memory = MemoryManager(user_id="amamiya")
-memory.store_memory("Hari ini aku pergi ke pasar membeli apel.")
-print(memory.recall("belanja buah", top_k=2))
+
+
+
+# from services.collection import contacts_col
+# data = {
+#     "name": "Dani",
+#     "number_phone": "085754006641",
+#     "group" : "Teman",
+#     "interaction" : 0
+# }
+# contacts_col.insert_one(data)

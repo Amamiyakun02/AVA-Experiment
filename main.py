@@ -6,8 +6,8 @@ from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from services import AIEngine
 from memory import MemoryManager
-from utils import  build_prompt, get_embedding
-from services import db, chroma_client
+from utils import  build_prompt
+
 with open("utils/func_call/func_instruction.json", "r") as f:
     FUNCTION_INSTRUCTION = json.load(f)
 with open("assistants/cristina.json", "r") as c:
@@ -64,43 +64,66 @@ class ChatRequest(BaseModel):
 @app.post("/streamtext")
 async def index(payload: ChatRequest = Body(...)):
     try:
+
         messages = payload.messages
         if not messages:
             raise ValueError("Tidak ada pesan dalam permintaan.")
-        user_input = messages[0].content
-        if not user_input:
-            raise ValueError("Konten pesan kosong.")
 
-        # === Memory Recall ===
-        context_memories = memory.recall(user_input, top_k=3)
-        context = "\n".join(context_memories)
+        # === Ambil memory dari Mongo (user + assistant) ===
+        context_memories = memory.recall_mongo(top_k=6)
+        print("[MEMORY CONTEXT]", context_memories)
 
-        # === Bangun Prompt dengan Memori ===
-        full_input = f"{context}\n\nUser:\n{user_input}" if context else user_input
+        # === Gabungkan memory + pesan baru dari user ===
+        prompt_blocks = []
+
+        # Tambahkan dari MongoDB memory
+        prompt_blocks += context_memories
+
+        # Tambahkan dari pesan baru
+        for msg in messages:
+            role = msg.role.lower()
+            label = "User" if role == "user" else ASSISTANT["name"]
+            prompt_blocks.append(f"{label}:\n{msg.content}")
+
+        # Gabungkan semua blok menjadi input untuk prompt
+        full_input = "\n\n".join(prompt_blocks)
         prompt = build_prompt(ASSISTANT, full_input)
+
+        print("[FINAL PROMPT]")
         print(prompt)
+
         # === Streaming ke LLM ===
         async def streaming_wrapper():
             full_response = ""
-            async for chunk in ai.stream_generate_text(prompt):
-                full_response += chunk
-                yield chunk
-            # Simpan memori setelah selesai stream
-            memory.store_memory(user_input, source="user")
-            memory.store_memory(full_response, source="assistant")
+            try:
+                async for chunk in ai.stream_generate_text(prompt):
+                    # Ekstrak teks dari chunk
+                    if chunk.startswith("data:"):
+                        try:
+                            payload = json.loads(chunk.replace("data: ", "").strip())
+                            text_part = payload.get("text", "")
+                        except json.JSONDecodeError:
+                            text_part = chunk  # fallback
+                    else:
+                        text_part = chunk  # fallback
+
+                    full_response += text_part
+                    yield chunk  # tetap kirim streaming mentah ke klien
+            finally:
+                # Simpan semua pesan input user
+                for msg in messages:
+                    memory.store_memory(msg.content, source=msg.role)
+
+                # Simpan output dari asisten (sudah dibersihkan)
+                memory.store_memory(full_response.strip(), source="assistant")
 
         return StreamingResponse(streaming_wrapper(), media_type="text/event-stream")
 
     except Exception as e:
-        print("❌ Error global /streamtext:", e)
-
-        async def error_stream():
-            yield f"❌ Gagal memproses permintaan: {str(e)}\n"
-
-        return StreamingResponse(error_stream(), media_type="text/plain", status_code=400)
+        return {"error": str(e)}
 
 @app.post("/streamer")
 async def stream_responsesss(user_input: str):
-    prompt = build_prompt(EXPERIENCE, user_input)
+    prompt = build_prompt(ASSISTANT, user_input)
 
     return StreamingResponse(ai.stream_generate_text(prompt), media_type="text/plain")
